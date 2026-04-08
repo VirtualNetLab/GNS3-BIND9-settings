@@ -1,0 +1,8 @@
+#!ipxe
+  
+set base http://192.168.100.5/linux/rocky/8.7/x86_64/os
+  
+prompt -k 0x197e -t 2000 Press F12 to install CentOS... || exit
+kernel ${base}/images/pxeboot/vmlinuz initrd=initrd.img inst.repo=${base}
+initrd ${base}/images/pxeboot/initrd.img
+boot

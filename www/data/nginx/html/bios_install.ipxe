@@ -1,0 +1,48 @@
+#!ipxe
+
+:start
+menu iPXE boot menu
+item --gap --             -------------------------------Installation ------------------------------
+item --gap --
+item rocky87              Rocky Linux 8.7 (EOL 31st May 2029) installation
+
+item --gap --             ------------------------- Advanced options -------------------------------
+item --key c config       Configure settings
+item shell                Drop to iPXE shell
+item reboot               Reboot computer
+item
+item --key x exit         Exit iPXE and continue boot
+
+choose target && goto ${target}
+
+
+
+:rocky87
+set server_ip 192.168.100.5
+set http_path linux/rocky/8.7
+kernel http://${server_ip}/${http_path}/vmlinuz initrd=initrd.img ip=dhcp inst.repo=http://${server_ip}/${http_path}/os
+initrd http://${server_ip}/${http_path}/initrd.img
+boot || goto failed
+
+
+
+:failed
+echo Booting failed, dropping to shell
+goto shell
+
+:shell
+echo Type 'exit' to get the back to the menu
+shell
+set menu-timeout 0
+set submenu-timeout 0
+goto start
+
+:reboot
+reboot
+
+:config
+config
+goto start
+
+:exit
+exit

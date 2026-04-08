@@ -1,0 +1,270 @@
+#Set hostname
+
+hostnamectl set-hostname file.aa.lan
+
+#set keymap locale (to finnish keyboard)
+
+localectl set-keymap fi
+
+#Set IP of NIC (adjust setting according to your network: eth0 and IP:s)
+
+nmcli connection modify eth0 ipv4.addresses 192.168.100.4/24 
+nmcli connection modify eth0 ipv4.gateway 192.168.100.1 
+nmcli connection modify eth0 ipv4.dns "192.168.100.1 192.168.100.2"
+nmcli connection modify eth0 ipv4.dns-search aa.lan
+nmcli connection modify eth0 ipv4.method manual
+nmcli connection down eth0; nmcli connection up eth0
+
+#verify IP
+nmcli device show eth0
+
+#AD using Samba Winbind, note this can be done  only if you have
+#windows server on your private network and in this exampåle the
+#name of the AD server is ns3.aa.lan
+----------------------------------------------------------------------------
+1. If your AD requires the deprecated RC4 encryption type for Kerberos authentication, enable support for these ciphers in RHEL:
+
+update-crypto-policies --set DEFAULT:AD-SUPPORT
+reboot now
+
+2. Install the following packages:
+dnf -y install realmd oddjob-mkhomedir oddjob samba-winbind-clients samba-winbind samba-common-tools samba-winbind-krb5-locator adcli krb5-workstation samba
+
+3. Backup the existing /etc/samba/smb.conf Samba configuration file:
+mv /etc/samba/smb.conf /etc/samba/smb.conf.bak
+
+4. Join the domain. For example, to join a domain named aa.lan: 
+realm join --membership-software=samba --client-software=winbind ns3.aa.lan
+
+5. Edit the /etc/krb5.conf file and add the following section:
+[plugins]
+    localauth = {
+        module = winbind:/usr/lib64/samba/krb5/winbind_krb5_localauth.so
+        enable_only = winbind
+    }
+	
+6. Verify that the winbind service is running:
+systemctl status winbind
+
+7. To share directories and printers, enable and start the smb service:
+systemctl enable --now smb
+
+#Verification steps
+8. Display an AD user’s details, such as the AD administrator account in the AD domain: 
+
+getent passwd "AA\administrator"
+
+9. Query the members of the domain users group in the AD domain:
+
+getent group "AA\Domain Users"
+
+10. Verify that you can use domain users and groups when you set permissions on files and directories. For example, to set the owner of the /srv/samba/example.txt file to AD\administrator and the group to AD\Domain Users:
+
+mkdir -p /samba/share01/
+nano /samba/share01/example.txt
+chown "AA\administrator":"AA\Domain Users" /samba/share01/example.txt
+
+11. Verify that Kerberos authentication works as expected:
+
+kinit administrator@AA.LAN
+
+Display the cached Kerberos ticket:
+
+klist
+
+12. Display the available domains:
+
+wbinfo --all-domains
+
+13. Creating a Samba share
+
+dnf -y install policycoreutils-python-utils
+semanage fcontext -a -t samba_share_t "/samba/share01(/.*)?"
+restorecon -Rv /samba/share01/
+
+[share01]
+	path = /samba/share01/
+	read only = no
+
+
+firewall-cmd --permanent --add-service=samba
+firewall-cmd --reload
+systemctl restart smb
+
+https://wiki.samba.org/index.php/Setting_up_a_Share_Using_Windows_ACLs
+
+
+setfacl -m group:"AA\Domain Admins":rwx /samba/share01/
+setfacl -m default:group:"AA\Domain Admins":rwx /samba/share01/
+chown "AA\administrator":"AA\Domain Users" /samba/share01/
+example.txt
+
+#end Samba
+-------------------------------------------
+
+
+#ZFS filesystem installation:
+-------------------------------------------
+
+1. install the EPEL repository and Yum utilities to prevent facing probable problems during the installation.
+
+yum -y install yum-utils
+dnf -y install epel-release
+
+2. install the ZFS file system
+dnf -y install https://zfsonlinux.org/epel/zfs-release-2-2$(rpm --eval "%{dist}").noarch.rpm
+dnf -y install zfs
+
+3. load ZFS driver
+/sbin/modprobe zfs
+
+4. see what utilities are enabled and disabled
+
+systemctl list-unit-files | grep zfs
+systemctl preset zfs-import-cache zfs-mount zfs-share zfs-zed zfs-import-scan zfs-volumes.target 
+
+systemctl enable zfs-import-scan.service
+systemctl enable zfs-volumes.target
+
+
+5. a look at the disks on our system
+
+lsblk
+
+6. create zpool and mount as /zstorage
+
+zpool create zstorage /dev/sdb
+mount
+
+7. Some commands for ZFS
+https://blog.eldernode.com/install-zfs-file-on-centos-8/
+zpool list
+zpool status
+
+#end ZFS
+--------------------------------------------
+
+#Configure NFS Server:
+---------------------------------------------
+1. install NFS
+dnf -y install nfs-utils
+
+2. edit /etc/idmapd.conf
+
+add Domain -> aa.lan
+
+3. create directory inside /zstorage/NFS
+
+mkdir /zstorage/NFS
+
+4. edit /etc/exports
+
+/zstorage/NFS 192.168.100.0/24(rw,no_root_squash) 
+
+5. enable NFS-server and open firewall ports for it
+
+systemctl enable --now rpcbind nfs-server 
+
+firewall-cmd --add-service=nfs --permanent 
+firewall-cmd --add-service={nfs3,mountd,rpc-bind} --permanent
+firewall-cmd --reload
+
+
+#end configure NFS Server:
+----------------------------------------------------
+
+#NFS client installation:
+----------------------------------------------------
+1. install NFS
+
+dnf -y install nfs-utils
+
+2. edit /etc/idmapd.conf 
+
+Domain = aa.lan
+
+3. Make folder for mountin NFS and mount the share
+
+mkdir /nfs
+mount -t nfs file.aa.lan:/storage /nfs
+df -hT
+mount -t nfs -o vers=3 file.aa.lan:/storage /nfs
+df -hT /nfs
+
+#end NFS client installation:
+----------------------------------------------------
+
+
+#iSCSI target (server):
+----------------------------------------------------
+1. Install the targetcli tool 
+
+dnf -y install targetcli
+
+2. Start the target service
+
+systemctl start target
+
+3. Configure target to start at boot time
+
+systemctl enable --now target
+
+4. Open port 3260 in the firewall and reload the firewall configuration
+
+firewall-cmd --permanent --add-port=3260/tcp
+firewall-cmd --reload
+
+5. Navigate to the iSCSI directory and create a directory
+
+mkdir /storage/iscsi_disks
+
+6. Execute targetcli
+targetcli
+
+
+7. inside targetcli
+cd backstores/fileio
+
+#Use one of the following options to create an iSCSI target
+
+9. inside targetcli create a disk-image with the name [disk01] on [/storage/iscsi_disks/disk01.img] with 10G
+
+create disk01 /storage/iscsi_disks/disk01.img 10G 
+cd /iscsi
+
+10. inside targetcli creating an iSCSI target using a specific name
+# naming rule : [ iqn.(year)-(month).(reverse of domain name):(any name you like) ]
+/iscsi> 
+create iqn.2023-01.lan.aa:file.target01
+cd iqn.2023-01.lan.aa:file.target01/tpg1/luns
+
+11. inside targetcliset LUN
+create /backstores/fileio/disk01
+cd ../acls
+
+12. inside targetcli set ACL (it's the IQN of an initiator you permit to connect)
+create iqn.2023-01.lan.aa:node01.initiator01
+cd iqn.2023-01.lan.aa:node01.initiator01
+
+13. inside targetcli set UserID and Password for authentication
+set auth userid=aaroot 
+set auth password=plh12gtD
+exit 
+
+13. after configuration above, the target enters in listening like follows
+ss -napt | grep 3260
+systemctl enable target 
+firewall-cmd --add-service=iscsi-target --permanent 
+firewall-cmd --reload 
+
+
+#end iSCSI target (server)
+----------------------------------------------------
+
+
+PXE booting:
+------------------------------------------------------
+1. Install and Start TFTP
+
+dnf -y install tftp-server
+firewall-cmd --add-service=tftp --permanent

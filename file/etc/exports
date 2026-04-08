@@ -1,0 +1,1 @@
+/zstorage/NFS 192.168.100.0/24(rw,no_root_squash,sync,no_wdelay,insecure_locks,insecure)

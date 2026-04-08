@@ -1,0 +1,62 @@
+#!ipxe
+
+#console --x 1024 --y 768
+#console --picture ipxe.png --left 32 --right 32 --top 32 --bottom 48
+#console --picture texture.png --left 32 --right 32 --top 32 --bottom 48
+#console --picture tux.png --left 32 --right 32 --top 32 --bottom 48
+
+###################### MAIN MENU ###################################
+
+:start
+menu iPXE boot menu
+
+item --gap --             -------------------------------Installation ------------------------------
+item --gap --
+item alma87               AlmaLinux 8.7 installation
+item --gap --
+item rocky87              Rocky Linux 8.7 (EOL 31st May 2029) installation
+item --gap --
+item --gap --             ------------------------- Advanced options -------------------------------
+item --key c config       Configure settings
+item shell                Drop to iPXE shell
+item reboot               Reboot computer
+item
+item --key x exit         Exit iPXE and continue boot
+
+choose target && goto ${target}
+
+#Installing totally from internet
+:alma87
+kernel http://www.nic.funet.fi/pub/mirrors/almalinux.org/8.7/BaseOS/x86_64/os/images/pxeboot/vmlinuz initrd=initrd.img ip=dhcp inst.repo=http://www.nic.funet.fi/pub/mirrors/almalinux.org/8.7/BaseOS/x86_64/os/
+initrd http://www.nic.funet.fi/pub/mirrors/almalinux.org/8.7/BaseOS/x86_64/os/images/pxeboot/initrd.img
+boot || goto failed
+
+#Installing from local http copy
+:rocky87
+set server_ip 192.168.100.5
+set http_path linux/rocky/8.7/x86_64/os
+kernel http://${server_ip}/${http_path}/images/pxeboot/vmlinuz initrd=initrd.img ip=dhcp inst.repo=http://${server_ip}/${http_path}
+initrd http://${server_ip}/${http_path}/images/pxeboot/initrd.img
+boot || goto failed
+
+
+:failed
+echo Booting failed, dropping to shell
+goto shell
+
+:shell
+echo Type 'exit' to get the back to the menu
+shell
+set menu-timeout 0
+set submenu-timeout 0
+goto start
+
+:reboot
+reboot
+
+:config
+config
+goto start
+
+:exit
+exit

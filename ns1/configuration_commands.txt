@@ -1,0 +1,231 @@
+#Set hostname
+
+hostnamectl set-hostname ns1.aa.lan
+
+#set keymap locale (to finnish keyboard)
+
+localectl set-keymap fi
+
+#Set IP of public NIC (adjust setting according to your network: eth0 and IP:s)
+#do this only if you have static IP
+
+nmcli connection modify eth0 ipv4.addresses 192.168.1.202/24 
+nmcli connection modify eth0 ipv4.gateway 192.168.1.1 
+nmcli connection modify eth0 ipv4.dns "8.8.8.8 8.8.4.4"
+nmcli connection modify eth0 ipv4.dns-search hh.lan
+nmcli connection modify eth0 ipv4.method manual
+nmcli connection down eth0; nmcli connection up eth0
+nmcli device show eth0
+ip address show
+
+#Gateway settings only if public IP is static (adjust setting according to your network: eth0, IP:s  and DNS provider)
+nmcli connection add con-name pub0 ifname eth0 type ethernet autoconnect yes ip4 192.168.1.202/24 gw4 192.168.1.1
+nmcli connection modify pub0 ipv4.method manual ipv4.dns "192.168.1.3 192.168.1.4 192.168.1.5" ipv6.method ignore
+nmcli connection modify pub0 connection.zone external
+nmcli connection down pub0; nmcli connection up pub0
+
+#gateway settings if puplic IP is assigned by DHCP
+nmcli connection add con-name pub0 ifname eth0 type ethernet autoconnect yes ip4 
+nmcli connection modify pub0 ipv4.method manual ipv4.dns "8.8.8.8 8.8.4.4" ipv6.method ignore
+nmcli connection modify pub0 connection.zone external
+nmcli connection down pub0; nmcli connection up pub0
+
+#private IP address (adjust setting according to your network: eth1 and IP:s):
+nmcli connection add con-name prv0 ifname eth1 type ethernet autoconnect yes ip4 192.168.100.1/24 gw4 192.168.100.1
+nmcli connection modify prv0 ipv4.method manual ipv4.dns 192.168.100.1 ipv6.method ignore
+nmcli connection modify prv0 ipv4.never-default yes
+nmcli connection modify prv0 connection.zone internal
+nmcli connection down prv0; nmcli connection up prv0
+
+firewall-cmd --set-default-zone=internal
+firewall-cmd --list-all
+firewall-cmd --list-all --zone=external
+
+#DNS and DHCP config:
+-------------------------------------------------
+
+1. DHCP and bind (DNS) installation:
+
+dnf -y install bind bind-utils dhcp-server
+
+2. Edit /etc/named.conf, /var/named/100.168.192.db and /var/named/aa.lan
+
+3. change owner of the files in /var/named after editing them
+
+chown named:named /var/named/aa.lan
+chown named:named /var/named/100.168.192.db
+
+4. Enable named (DNS server)
+
+systemctl enable --now named
+firewall-cmd --add-service=dns
+firewall-cmd --runtime-to-permanent
+
+systemctl status named
+
+
+5. edit /etc/dhcp/dhcpd.conf (see file dhcpd.conf01)
+
+6. enable DCHP server and open firewall ports for internal network
+
+systemctl enable --now dhcpd
+firewall-cmd --add-service=dhcp 
+firewall-cmd --runtime-to-permanent
+
+firewall-cmd --list-all --zone=internal
+
+#end DNS and DHCP config
+-------------------------------------------------
+
+
+#NFS client installation (note server in file.aa.lan 
+#needs to be configured first):
+----------------------------------------------------
+1. install NFS
+
+dnf -y install nfs-utils
+
+2. edit /etc/idmapd.conf 
+
+Domain = aa.lan
+
+3. Make folder for mounting NFS and mount the share
+
+mkdir /nfs
+mount -t nfs file.aa.lan:/storage /nfs
+df -hT
+mount -t nfs -o vers=3 file.aa.lan:/storage /nfs
+df -hT /nfs
+
+#end NFS client installation:
+----------------------------------------------------
+
+
+#Configuration of DHCP server after ns2.aa.lan has 
+#been configured
+----------------------------------------------------
+
+1. edit /etc/dhcp/dhcpd.conf (see file dhcpd.conf)
+
+2. restart dhcpd daemon:
+
+systemctl restart dhcpd
+
+#end Configuration of DHCP server after ns2.aa.lan has 
+#been configured
+----------------------------------------------------
+
+
+#PXE stuff
+----------------------------------------------------
+
+1. make some directories and install development utilities:
+
+cd /
+mkdir /data
+cd data
+dnf -y groupinstall "Development Tools"
+dnf -y install git wget
+
+2. get the source of iPXE:
+
+git clone git://git.ipxe.org/ipxe.git
+
+
+3. go to directory /data/ipxe/src and make two files in the. 
+Other file is for legacy BIOS boot and other for UEFI:
+
+cd /data/ipxe/src
+
+cat > UEFIchain.ipxe
+#!ipxe
+dhcp
+chain http://192.168.100.5/uefi_install.ipxe
+
+4. compile the binaries for legacy BIOS and UEFI booting and 
+copy them to /data/ipxe directory:
+
+
+make bin/undionly.kpxe EMBED=legacyBIOSchain.ipxe
+make bin-x86_64-efi/ipxe.efi EMBED=UEFIchain.ipxe
+
+cp bin/undionly.kpxe ../
+cp bin-x86_64-efi/ipxe.efi ../
+
+
+5. copy the created files www.aa.lan servers /data/tftpboot 
+directory (make sure that tftp is configured in www.aa.lan
+first):
+
+cd /data/ipxe
+sftp root@192.168.100.5
+put /data/ipxe/ipxe.efi /data/tftpboot
+put /data/ipxe/undionly.kpxe /data/tftpboot
+!
+
+#make sure that tftpd_t in SELinux is set to be permissive in www.aa.lan!
+
+6. edit the /etc/dhcp/dhcpd.conf if it is not done yet
+
+
+7. restart the dhcpd service to changes to take effect:
+
+systemctl restart dhcpd
+
+#end PXE stuff
+----------------------------------------------------
+
+
+
+
+
+#routing port 80 to www.aa.lan
+----------------------------------------------------
+1. create a table named nat with the ip address family:
+
+nft add table ip nat
+
+2. add the prerouting and postrouting chains to the table:
+
+nft -- add chain ip nat prerouting { type nat hook prerouting priority -100 \; }
+nft add chain ip nat postrouting { type nat hook postrouting priority 100 \; }
+
+
+3. add a rule to the prerouting chain that redirects incoming packets on port 80 to the same port on 192.168.100.5 (www.aa.lan IP address):
+
+nft add rule ip nat prerouting tcp dport 80 dnat to 192.168.100.5
+
+
+4. add a rule to the postrouting chain to masquerade outgoing traffic:
+
+nft add rule ip nat postrouting ip daddr 192.168.100.5 masquerade
+
+5. enable packet forwarding:
+
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/95-IPv4-forwarding.conf
+
+sysctl -p /etc/sysctl.d/95-IPv4-forwarding.conf
+
+6. make these settings load after rebooting the server
+(this can be done differently, but servers as an example
+how to load custom script at boot time) :
+
+cat > /data/port80forward.sh
+#!/bin/bash
+nft add table ip nat
+nft -- add chain ip nat prerouting { type nat hook prerouting priority -100 \; }
+nft add chain ip nat postrouting { type nat hook postrouting priority 100 \; }
+nft add rule ip nat prerouting tcp dport 80 dnat to 192.168.100.5
+nft add rule ip nat postrouting ip daddr 192.168.100.5 masquerade
+#(ctrl + d) will exit the command
+
+chmod u+x /data/port80forward.sh
+echo "sh /data/port80forward.sh" >> /etc/rc.d/rc.local
+chmod +x /etc/rc.d/rc.local
+
+
+#end routing port 80 to www.aa.lan
+# also any other port/protocol can be forwardet:
+# nft add rule ip nat prerouting PROTO dport PORTNR dnat to IPADDR
+# nft add rule ip nat postrouting ip daddr IPADDR masquerade
+----------------------------------------------------

@@ -1,0 +1,230 @@
+#Set hostname
+
+hostnamectl set-hostname www.aa.lan
+
+#set keymap locale (to finnish keyboard)
+
+localectl set-keymap fi
+
+#Set IP of NIC (adjust setting according to your network: eth0 and IP:s)
+
+nmcli connection modify eth0 ipv4.addresses 192.168.100.5/24 
+nmcli connection modify eth0 ipv4.gateway 192.168.100.1 
+nmcli connection modify eth0 ipv4.dns "192.168.100.1 192.168.100.2"
+nmcli connection modify eth0 ipv4.dns-search aa.lan
+nmcli connection modify eth0 ipv4.method manual
+nmcli connection down eth0; nmcli connection up eth0
+nmcli device show eth0
+
+
+#Install Nginx
+----------------------------------------------------
+
+1. Install Nginx
+dnf -y install nginx
+
+2. Make new directories for html files, copy the files from default
+location and set permissions:
+
+mkdir -p /data/nginx/html
+cp -R /usr/share/nginx/html /data/nginx/html
+chown -R nginx:nginx /data/nginx/html
+chmod -R 755 /data/nginx/html
+
+3. because of selinux some settings needs to be adjusted when
+changing the location of html files from default:
+
+dnf -y install policycoreutils-python-utils
+semanage permissive -a httpd_t
+
+3. edit /etc/nginx/nginx.conf
+->server_name www.aa.lan;
+->root /data/nginx/html;
+
+4. Enable Nginx and open firewall ports
+
+systemctl enable --now nginx
+firewall-cmd --add-service=http --permanent
+firewall-cmd --reload
+
+5. If and when you alter Nginx settings the daemon needs
+to restarted (or reloaded):
+
+systemctl restart nginx
+
+6. https -> no commands chown here. See docs how to:
+
+7. Routing from public IP is done in gateway (ns1.aa.lan)
+
+#end Install Nginx
+----------------------------------------------------
+
+
+#NFS client installation (note server in file.aa.lan 
+#needs to be configured first):
+----------------------------------------------------
+1. install NFS
+
+dnf -y install nfs-utils
+
+2. edit /etc/idmapd.conf 
+
+Domain = aa.lan
+
+3. Make folder for mounting NFS and mount the share
+
+mkdir /nfs
+mount -t nfs file.aa.lan:/storage /nfs
+df -hT
+mount -t nfs -o vers=3 file.aa.lan:/storage /nfs
+df -hT /nfs
+
+
+4. Lets backup something to the NFS with rsync
+
+mkdir -p /nfs/www.aa.lan/data/
+rsync -azvhxP /data/nginx/ /nfs/www.aa.lan/data/
+
+#end NFS client installation:
+----------------------------------------------------
+
+
+#iSCSI initiator:
+--------------------------------------
+1. iSCSI installation
+
+dnf -y install iscsi-initiator-utils 
+
+2. Edit /etc/iscsi/initiatorname.iscsi
+-> change to the same IQN you set on the iSCSI target server
+InitiatorName=iqn.2023-01.lan.aa:node01.initiator01
+
+3. Edit (uncomment): /etc/iscsi/iscsid.conf
+node.session.auth.authmethod = CHAP
+node.session.auth.username = aaroot
+node.session.auth.password = plh12gtD
+
+4. discover target
+
+iscsiadm -m discovery -t sendtargets -p 192.168.100.4
+
+5. confirm status after discovery
+
+iscsiadm -m node -o show
+
+7. login to the target
+
+iscsiadm -m node --login 
+
+8. confirm the established session
+
+iscsiadm -m session -o show
+
+9. confirm the partitions
+
+cat /proc/partitions
+
+#-> added new device provided from the target server as [sdb]
+#After setting iSCSI device, configure on Initiator to use it like follows.
+
+10. create label
+
+parted --script /dev/sdb "mklabel gpt"
+
+11. create partiton
+
+parted --script /dev/sdb "mkpart primary 0% 100%"
+
+12. format with exFAT () (this is example how to use a non default
+filesystem, installation of it etc.):
+
+dnf -y install epel-release 
+dnf install -y exfatprogs
+dnf -y group install 'Development Tools'
+dnf -y install fuse-devel gcc autoconf automake git
+
+
+cd /usr/local/src && git clone https://github.com/relan/exfat.git
+cd exfat
+autoreconf --install
+./configure --prefix=/usr
+make && make install
+make clean
+
+
+mkfs.exfat --volume-label=iSCSIDisk -f /dev/sdb1
+mkdir /data/iSCSI01
+
+mount.exfat-fuse /dev/sdb1 /data/iSCSI01
+
+df -hT
+
+#end iSCSI initiator:
+--------------------------------------
+
+13. Lets backup something to the iSCSI with rsync
+
+mkdir -p /data/iSCSI01/www.aa.lan/data/
+rsync -azvhxP /data/nginx/ /data/iSCSI01/www.aa.lan/data/
+
+#TFTP configuration
+--------------------------------------
+
+
+
+
+
+
+
+
+#end TFTP configuration
+--------------------------------------
+
+1. install the tftp-server and open firewall ports for it:
+
+dnf -y install tftp-server
+firewall-cmd --add-service=tftp --permanent
+firewall-cmd --reload
+
+2. step is to create directory /data/tftpboot and copy the default tftp service files to other names:
+
+mkdir /data/tftpboot
+cp /usr/lib/systemd/system/tftp.service /etc/systemd/system/tftp-server.service
+cp /usr/lib/systemd/system/tftp.socket /etc/systemd/system/tftp-server.socket
+
+
+3. edit /etc/systemd/system/tftp-server.service to have following content (it is after this configuration pointing to folder /data/tftpboot):
+
+[Unit]
+Description=Tftp Server
+Requires=tftp-server.socket
+Documentation=man:in.tftpd
+[Service]
+ExecStart=/usr/sbin/in.tftpd -c -p -s /data/tftpboot
+StandardInput=socket
+[Install]
+WantedBy=multi-user.target
+Also=tftp-server.socket
+
+
+4. enable the tftp service and set SELinux permissive for it:
+
+systemctl enable --now tftp-server
+systemctl daemon-reload
+semanage permissive -a tftpd_t
+
+
+5. install wget, make directory /data/nginx/html/linux/rocky/8.7 
+and use wget to get instal-lation files of Rocky Linux from 
+www.nic.funet.fi mirror:
+
+dnf -y install wget
+
+mkdir -p /data/nginx/html/linux/rocky/8.7
+cd /data/nginx/html/linux/rocky/8.7
+
+wget -r -nH --cut-dirs=5 --no-parent -e robots=off --reject="index.html*" https://www.nic.funet.fi/pub/mirrors/rockylinux.org/8.7/BaseOS/x86_64/os/
+
+
+6. make and edit the files bios_install.ipxe and uefi_install.ipxe inside directory /data/nginx/html.
+

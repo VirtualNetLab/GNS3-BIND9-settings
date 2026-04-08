@@ -1,0 +1,21 @@
+;
+; BIND reverse data file for local loopback interface
+;
+$TTL    604800
+@       IN      SOA     aa.lan. root.aa.lan. (
+                             13         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+; Name servers
+	IN	NS	ns1.aa.lan.
+	IN	NS	ns2.aa.lan.
+;	IN	NS	ns3.aa.lan.
+
+; PTR records
+1	IN	PTR	ns1.aa.lan.
+2	IN	PTR	ns2.aa.lan.
+;3	IN  PTR	ns3.aa.lan.
+;4	IN  PTR	file.aa.lan.
+5	IN	PTR	www.aa.lan.

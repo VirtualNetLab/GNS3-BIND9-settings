@@ -1,0 +1,10 @@
+[Unit]
+Description=Tftp Server
+requires=tftp.socket
+
+
+[Socket]
+ListenDatagram=69
+
+[Install]
+WantedBy=sockets.target

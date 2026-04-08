@@ -1,0 +1,61 @@
+#Set hostname
+hostnamectl set-hostname ns2.aa.lan
+
+#set keymap locale (to finnish keyboard)
+localectl set-keymap fi
+
+#Set IP of NIC (adjust setting according to your network: eth0 and IP:s)
+nmcli connection modify eth0 ipv4.addresses 192.168.100.2/24 
+nmcli connection modify eth0 ipv4.gateway 192.168.100.1 
+nmcli connection modify eth0 ipv4.dns "192.168.100.1 192.168.100.2"
+nmcli connection modify eth0 ipv4.dns-search aa.lan
+nmcli connection modify eth0 ipv4.method manual
+nmcli connection down eth0; nmcli connection up eth0
+nmcli device show eth0
+
+#DNS config:
+-------------------------------------------------
+
+1. bind (DNS) installation:
+
+dnf -y install bind bind-utils dhcp-server
+
+2. Edit /etc/named.conf
+
+
+3. Enable named (DNS server)
+
+systemctl enable --now named
+firewall-cmd --add-service=dns
+firewall-cmd --runtime-to-permanent
+
+systemctl status named
+
+#end DNS config
+-------------------------------------------------
+
+
+
+
+
+#NFS client installation (note server in file.aa.lan 
+#needs to be configured first):
+----------------------------------------------------
+1. install NFS
+
+dnf -y install nfs-utils
+
+2. edit /etc/idmapd.conf 
+
+Domain = aa.lan
+
+3. Make folder for mounting NFS and mount the share
+
+mkdir /nfs
+mount -t nfs file.aa.lan:/storage /nfs
+df -hT
+mount -t nfs -o vers=3 file.aa.lan:/storage /nfs
+df -hT /nfs
+
+#end NFS client installation:
+----------------------------------------------------
